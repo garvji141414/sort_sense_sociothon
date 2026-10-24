@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SortSense — AI Waste Segregation Prototype</title>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"></script>
+<style>
+:root{--bg:#f7f8f4;--card:#fff;--ink:#141414;--mut:#5d6158;--line:#e2e5dc;--lime:#b8e62a;--pur:#6b3fd9;
+--bio:#2e9e4f;--rec:#2f5beb;--non:#6b6b6b;--haz:#d64545;color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121411;--card:#1c1f1a;--ink:#eef0ea;--mut:#a5aa9f;--line:#30342c;color-scheme:dark}}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+header{padding:18px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.logo{width:40px;height:40px;border-radius:12px;background:var(--lime);display:grid;place-items:center;font-size:22px}
+h1{font-size:22px;margin:0}header p{margin:0;color:var(--mut);font-size:13px}
+.status{margin-left:auto;font-size:12px;padding:6px 10px;border-radius:99px;background:var(--card);border:1px solid var(--line)}
+main{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:16px;padding:0 20px 24px;max-width:1200px;margin:auto}
+@media(max-width:860px){main{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px}
+h2{font-size:15px;margin:0 0 12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut)}
+.drop{border:2px dashed var(--line);border-radius:14px;min-height:260px;display:grid;place-items:center;position:relative;overflow:hidden;cursor:pointer;text-align:center;color:var(--mut)}
+.drop img,.drop video{max-width:100%;max-height:340px;display:block}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+button{font:inherit;border:0;border-radius:10px;padding:10px 14px;cursor:pointer;background:var(--ink);color:var(--bg);font-weight:600}
+button.alt{background:transparent;color:var(--ink);border:1px solid var(--line)}button:disabled{opacity:.4;cursor:default}
+input[type=text]{flex:1;min-width:160px;font:inherit;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+.result{display:none;margin-top:14px;border-radius:14px;padding:14px;border:2px solid var(--line)}
+.result h3{margin:0 0 4px;font-size:22px}.tag{font-size:12px;color:var(--mut)}
+.bar{height:8px;border-radius:9px;background:var(--line);overflow:hidden;margin:8px 0}.bar i{display:block;height:100%}
+.tips{font-size:14px;line-height:1.45;margin:8px 0 0}
+.confirm{display:none;margin-top:10px;padding:10px;border-radius:10px;background:#fff6dc;color:#5a4300;font-size:14px}
+.confirm .row button{padding:8px 10px;font-size:13px}
+.bins{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.bin{text-align:center;font-size:12px;font-weight:600}
+.can{height:110px;border-radius:6px 6px 12px 12px;position:relative;margin:26px auto 6px;width:80%;display:flex;align-items:flex-end;justify-content:center;color:#fff;font-size:20px;padding-bottom:8px}
+.lid{position:absolute;top:-14px;left:-6%;width:112%;height:12px;border-radius:6px;transition:transform .4s;transform-origin:left bottom;background:inherit;filter:brightness(.8)}
+.bin.open .lid{transform:rotate(-35deg)}.bin.open .can{box-shadow:0 0 0 4px var(--lime)}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px}
+.stat{background:var(--bg);border-radius:12px;padding:10px;text-align:center}.stat b{display:block;font-size:24px}
+.stat span{font-size:11px;color:var(--mut)}
+table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:6px;border-bottom:1px solid var(--line);text-align:left}
+.log{max-height:220px;overflow:auto}
+canvas#chart{width:100%;height:150px}
+.note{font-size:12px;color:var(--mut);margin-top:8px}
+</style></head><body>
+<header><div class="logo">♻️</div><div><h1>SortSense</h1><p>AI-based waste identification &amp; segregation · Sociothon 2026 · team_name</p></div>
+<div class="status" id="status">Loading AI model…</div></header>
+<main>
+<section class="card">
+  <h2>1 · Scan an item</h2>
+  <div class="drop" id="drop"><div id="ph">📷<br>Tap to upload a photo, drop an image,<br>or use the live camera</div></div>
+  <input type="file" id="file" accept="image/*" capture="environment" hidden>
+  <div class="row"><button id="up">Upload photo</button><button class="alt" id="cam">Live camera</button><button class="alt" id="snap" disabled>Capture</button></div>
+  <div class="row"><input type="text" id="q" placeholder="Or type an item: e.g. chips packet, banana peel, AA battery"><button class="alt" id="go">Look up</button></div>
+  <div class="result" id="res">
+    <div class="tag" id="rlabel"></div><h3 id="rcat"></h3>
+    <div class="bar"><i id="rbar"></i></div><div class="tag" id="rconf"></div>
+    <p class="tips" id="rtips"></p>
+    <div class="confirm" id="confirm">⚠️ Not confident enough to auto-sort. Which bin is correct? (Your answer is saved as a training label.)
+      <div class="row" id="cbtns"></div></div>
+  </div>
+</section>
+<section class="card">
+  <h2>2 · Smart bin simulation</h2>
+  <div class="bins" id="bins"></div>
+  <p class="note">Lid of the predicted compartment opens (servo flap on the hardware build). Low-confidence items keep all lids closed until a human confirms.</p>
+  <h2 style="margin-top:18px">3 · Segregation dashboard</h2>
+  <div class="stats"><div class="stat"><b id="sTot">0</b><span>items sorted</span></div><div class="stat"><b id="sAuto">–</b><span>auto-sorted (confident)</span></div><div class="stat"><b id="sRec">0</b><span>recyclables recovered</span></div></div>
+  <canvas id="chart" width="600" height="150"></canvas>
+  <div class="log"><table><thead><tr><th>Time</th><th>Item</th><th>Bin</th><th>Conf.</th><th>Mode</th></tr></thead><tbody id="log"></tbody></table></div>
+  <div class="row"><button class="alt" id="csv">Export CSV</button><button class="alt" id="reset">Reset</button></div>
+</section>
+</main>
+<script>
+const CATS={
+ bio:{name:'Biodegradable',color:'var(--bio)',icon:'🍌',tips:'Wet/green bin. Drain liquids first. Goes to campus composter / biogas unit.'},
+ rec:{name:'Recyclable',color:'var(--rec)',icon:'♻️',tips:'Dry/blue bin. Empty, rinse and flatten. Keep paper dry. Sold to authorised recycler.'},
+ non:{name:'Non-recyclable',color:'var(--non)',icon:'🗑️',tips:'Reject bin. Multi-layer packaging, soiled tissue, thermocol. Sent to RDF / landfill — try to reduce use.'},
+ haz:{name:'Hazardous / E-waste',color:'var(--haz)',icon:'⚠️',tips:'Red / e-waste box. Never mix with other waste. Batteries, bulbs, chargers, sanitary & medical waste go to authorised handlers.'}};
+// keyword → category (applies to ImageNet labels and typed queries)
+const RULES=[
+ ['haz',['battery','batteries','cell','bulb','lamp','tube light','cfl','charger','cable','phone','cellular','laptop','notebook computer','mouse','keyboard','remote','ipod','modem','hard disc','monitor','screen','television','syringe','medicine','pill','tablet strip','thermometer','sanitary','diaper','razor','blade','paint','spray','aerosol','lighter','printer','headphone','earphone','power drill','iron','hair dryer','electric']],
+ ['bio',['banana','orange','lemon','apple','fruit','peel','vegetable','food','cabbage','broccoli','cauliflower','cucumber','zucchini','mushroom','corn','pomegranate','strawberry','pineapple','fig','jackfruit','custard apple','bread','bagel','pretzel','pizza','burrito','hotdog','hot dog','meat','egg','rice','dough','plate','potpie','carbonara','guacamole','consomme','trifle','ice cream','leaf','leaves','flower','daisy','hay','acorn','tea','coffee grounds','bone','husk','coconut','grass']],
+ ['rec',['bottle','water bottle','pop bottle','beer bottle','wine bottle','can','tin','beer can','aluminium','aluminum','carton','cardboard','box','paper','newspaper','envelope','book','comic','magazine','notebook','jar','glass','goblet','beaker','cup','mug','bucket','pail','crate','packet','tray','steel','metal','foil','shopping basket','cereal box']],
+ ['non',['chips','crisps','wrapper','multi-layer','tetra','tissue','napkin','toilet tissue','paper towel','styrofoam','thermocol','polystyrene','straw','plastic bag','sachet','chewing gum','cigarette','band aid','mask','sock','shoe','sandal','toothbrush','pen','ballpoint','rubber','eraser','balloon','sponge','candle']]];
+// specific overrides checked first (multi-word)
+const OVERRIDE=[['paper cup','non'],['paper towel','non'],['chips packet','non'],['plastic bag','non'],['milk packet','rec'],['egg shell','bio'],['tetra pack','non'],['pizza box','non'],['ballpoint','non'],['water bottle','rec']];
+function categorize(text){const t=text.toLowerCase();
+ for(const [k,c] of OVERRIDE) if(t.includes(k)) return c;
+ for(const [c,words] of RULES) for(const w of words) if(new RegExp('\\b'+w+'\\b').test(t)) return c;
+ return null;}
+const THRESH=0.80;
+let model=null,stream=null,history=[];
+try{history=JSON.parse(localStorage.getItem('sortsense')||'[]')}catch(e){history=[]}
+const $=id=>document.getElementById(id);
+// bins
+$('bins').innerHTML=Object.entries(CATS).map(([k,c])=>`<div class="bin" id="bin-${k}"><div class="can" style="background:${c.color}"><div class="lid"></div>${c.icon}</div>${c.name}</div>`).join('');
+mobilenet.load({version:2,alpha:1.0}).then(m=>{model=m;$('status').textContent='✅ AI model ready (MobileNetV2, on-device)';}).catch(e=>{$('status').textContent='⚠️ Model offline — text lookup still works';});
+function openBin(k){document.querySelectorAll('.bin').forEach(b=>b.classList.remove('open'));if(k){$('bin-'+k).classList.add('open');setTimeout(()=>$('bin-'+k).classList.remove('open'),2500);}}
+function show(label,cat,conf,mode){
+ const r=$('res');r.style.display='block';$('confirm').style.display='none';
+ $('rlabel').textContent='Detected: '+label;
+ if(!cat){$('rcat').textContent='Unknown item';r.style.borderColor='var(--line)';$('rtips').textContent='Not in our database yet. Please choose the correct bin below — this helps train the model.';}
+ else{const c=CATS[cat];$('rcat').textContent=c.icon+' '+c.name;$('rcat').style.color=c.color;r.style.borderColor=c.color;$('rtips').textContent=c.tips;}
+ $('rbar').style.width=Math.round(conf*100)+'%';$('rbar').style.background=conf>=THRESH?'var(--bio)':'#e09b1a';
+ $('rconf').textContent=`Confidence ${Math.round(conf*100)}% · threshold ${THRESH*100}%`;
+ if(cat&&conf>=THRESH){openBin(cat);record(label,cat,conf,mode);}
+ else askHuman(label,cat,conf);
+}
+function askHuman(label,guess,conf){$('confirm').style.display='block';
+ $('cbtns').innerHTML=Object.entries(CATS).map(([k,c])=>`<button ${k===guess?'':'class="alt"'} data-k="${k}">${c.icon} ${c.name}${k===guess?' (AI guess)':''}</button>`).join('');
+ $('cbtns').querySelectorAll('button').forEach(b=>b.onclick=()=>{const k=b.dataset.k;$('confirm').style.display='none';
+  const c=CATS[k];$('rcat').textContent=c.icon+' '+c.name+' (confirmed)';$('rcat').style.color=c.color;$('res').style.borderColor=c.color;$('rtips').textContent=c.tips;
+  openBin(k);record(label,k,conf,'human-confirmed');});}
+function record(label,cat,conf,mode){history.push({t:new Date().toISOString(),label,cat,conf:+conf.toFixed(3),mode});
+ try{localStorage.setItem('sortsense',JSON.stringify(history))}catch(e){} render();}
+async function classify(el){
+ if(!model){$('status').textContent='Model still loading…';return;}
+ const preds=await model.classify(el,5);
+ // pick the highest-probability prediction that maps to a category; aggregate prob per category
+ const agg={};let best=null;
+ for(const p of preds){const c=categorize(p.className);if(c){agg[c]=(agg[c]||0)+p.probability;if(!best)best={label:p.className.split(',')[0],c};}}
+ if(!best){show(preds[0].className.split(',')[0],null,preds[0].probability,'ai');return;}
+ const total=preds.reduce((s,p)=>s+p.probability,0);
+ const conf=Math.min(1,agg[best.c]/Math.max(total,0.0001)*Math.min(1,total*1.6));
+ show(best.label,best.c,conf,'ai');
+}
+function lookup(){const q=$('q').value.trim();if(!q)return;const c=categorize(q);show(q,c,c?0.95:0,'text');}
+$('go').onclick=lookup;$('q').onkeydown=e=>{if(e.key==='Enter')lookup()};
+$('up').onclick=()=>$('file').click();$('drop').onclick=()=>{if(!stream)$('file').click()};
+$('file').onchange=e=>{const f=e.target.files[0];if(f)loadFile(f);e.target.value=''};
+$('drop').ondragover=e=>e.preventDefault();$('drop').ondrop=e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f)loadFile(f)};
+function loadFile(f){stopCam();const img=new Image();img.onload=()=>classify(img);img.src=URL.createObjectURL(f);$('drop').innerHTML='';$('drop').appendChild(img);}
+$('cam').onclick=async()=>{try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+ const v=document.createElement('video');v.autoplay=true;v.playsInline=true;v.srcObject=stream;$('drop').innerHTML='';$('drop').appendChild(v);$('snap').disabled=false;}
+ catch(e){alert('Camera not available here — please upload a photo instead.');}};
+$('snap').onclick=()=>{const v=$('drop').querySelector('video');if(!v)return;const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0);
+ const img=new Image();img.onload=()=>classify(img);img.src=c.toDataURL('image/jpeg');stopCam();$('drop').innerHTML='';$('drop').appendChild(img);};
+function stopCam(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;$('snap').disabled=true;}}
+function render(){const n=history.length;$('sTot').textContent=n;
+ $('sAuto').textContent=n?Math.round(100*history.filter(h=>h.mode!=='human-confirmed').length/n)+'%':'–';
+ $('sRec').textContent=history.filter(h=>h.cat==='rec').length;
+ $('log').innerHTML=history.slice().reverse().slice(0,50).map(h=>`<tr><td>${new Date(h.t).toLocaleTimeString()}</td><td>${h.label.replace(/</g,'&lt;')}</td><td style="color:${CATS[h.cat].color}">${CATS[h.cat].name}</td><td>${Math.round(h.conf*100)}%</td><td>${h.mode}</td></tr>`).join('');
+ const cv=$('chart'),x=cv.getContext('2d'),W=cv.width,H=cv.height;x.clearRect(0,0,W,H);
+ const ks=Object.keys(CATS),cs=getComputedStyle(document.documentElement);const counts=ks.map(k=>history.filter(h=>h.cat===k).length);const mx=Math.max(1,...counts);
+ ks.forEach((k,i)=>{const bw=W/4-30,bx=i*W/4+15,bh=(H-36)*counts[i]/mx;x.fillStyle=cs.getPropertyValue('--'+k).trim();x.fillRect(bx,H-20-bh,bw,bh);
+  x.fillStyle=cs.getPropertyValue('--ink').trim();x.font='bold 13px system-ui';x.textAlign='center';x.fillText(counts[i],bx+bw/2,H-24-bh);x.font='12px system-ui';x.fillText(CATS[k].name.split(' ')[0],bx+bw/2,H-5);});}
+$('csv').onclick=()=>{const rows=['time,item,category,confidence,mode',...history.map(h=>[h.t,'"'+h.label+'"',CATS[h.cat].name,h.conf,h.mode].join(','))];
+ const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([rows.join('\n')],{type:'text/csv'}));a.download='sortsense_log.csv';a.click();};
+$('reset').onclick=()=>{history=[];try{localStorage.removeItem('sortsense')}catch(e){}render();$('res').style.display='none';};
+render();
+</script></body></html>
